@@ -15,34 +15,65 @@ library(stargazer)
 library(modelsummary)
 # reading in the dataset
 df <- read.csv("clean_data/df_clean.csv")
+```
+
+# Analysis
+
+I create the analysis dataframe that is fundamental to all the models and summary statistics that I will do.
+```{r}
+## modifying the unemployment rate and the bachelor's degrees rate
+# adding in the time-to-treatment variable.
+# nevada's retail vs sports implementation too extreme based on calculation
+
+df_analysis <- df %>%
+  filter(!(state == "Nevada"), date > 2015) %>%
+  mutate(unemployment = unemployment/100,
+         bachelors = bachelors/100,
+         Poverty.Rate = Poverty.Rate/100,
+         time_treat_retail = ifelse(retail == 1, date - retailyear, 0),
+         time_treat_online = ifelse(online == 1, date - onlineyear, 0),
+         time_treat = ifelse(legal == 1, date - legal.year, 0))
 
 ```
 
+# Summary Statistics
+## Basic Summary 1: Ungrouped
 
-# Basic Summary 1: Ungrouped
 ```{r}
-summary <- df %>% select(population, unemployment, bachelors, rgdp_2017)
+summary <- df_analysis %>% select(population, unemployment, bachelors, rgdp_2017, Employment, Poverty.Rate)
 labels = c("Population (Thou)",
-           "Unemployment (%)",
-           "Bachelor's Degree (%)",
-           "Real GDP (2017, Thou)")
-stargazer(summary, type = "latex", title = "Descriptive Statistics of All States", digits = 1, covariate.labels = labels)
+           "Unemployment Rate (%)", # must adjust in latex to avoid commenting issue.
+           "Bachelor's Degree (% of Population)",
+           "Real GDP (2017, Thou)",
+           "Employment (Thou)", #not seasonally adjusted, reason in caption...
+           "Poverty Rate (%)")
+
+table1_tex <- capture.output(stargazer(summary, type = "latex", float.env = "sidewaystable", title = "Descriptive Statistics of All States", digits = 1, covariate.labels = labels, notes = "Employment is not seasonally adjusted, chosen due to the nature of the sports industry."))
+
+# table1_tex <- gsub("\\\\centering", "\\\\raggedright", table1_tex) # not necessary for sideways tables...
+cat(table1_tex, sep = "\n")
 ```
 
-# Basic Summary 2: Grouped by Legal, Retail Only, Online Only
+## Basic Summary 2: Grouped by Legal, Retail Only, Online Only
+
+The idea is to concatenate this table with the first table to make a very large table. This is done in LaTeX.
 ```{r}
 
-summary_retail <- df %>% filter(retail == 1) %>% select(population, unemployment, bachelors, rgdp_2017) 
+summary_retail <- df_analysis %>% filter(retail == 1) %>% select(population, unemployment, bachelors, rgdp_2017, Employment, Poverty.Rate) 
 
-stargazer(summary_retail, type = "latex", title = "Descriptive Statistics (States Legalized Retail)", digits = 1, covariate.labels = labels)
+table1_ret_tex <- capture.output(stargazer(summary_retail, type = "latex", title = "Descriptive Statistics (States Legalized Retail)", digits = 1, covariate.labels = labels))
 
-summary_online <- df %>% filter(online == 1) %>% select(population, unemployment, bachelors, rgdp_2017)
+summary_online <- df_analysis %>% filter(online == 1) %>% select(population, unemployment, bachelors, rgdp_2017, Employment, Poverty.Rate)
 
-stargazer(summary_online, type = "latex", title = "Descriptive Statistics (States Legalized Online)", digits = 1, covariate.labels = labels, notes = "Many states that have legalized online gambling have also legalized retail gambling (and vice versa). This explains why the number of observations between the second table and third table are seemingly too high.")
+table1_onl_tex <- capture.output(stargazer(summary_online, type = "latex", title = "Descriptive Statistics (States Legalized Online)", digits = 1, covariate.labels = labels, notes = "Many states that have legalized online gambling have also legalized retail gambling (and vice versa). This explains why the number of observations between the second table and third table are seemingly too high."))
+
+cat(table1_ret_tex, table1_onl_tex, sep = '\n')
 
 ```
 
 #Plot of US Map with Legalization
+
+This is quite straightforward so I won't elaborate much further.
 
 ```{r}
 library(usmap)
@@ -65,26 +96,46 @@ plot_usmap(color = "black",
 ```
 
 
+# Trend of Legalization 
+Uses panelView package to achieve this, better looking than a simple line or bar plot.
 
-
-# Analysis
 ```{r}
-## modifying the unemployment rate and the bachelor's degrees rate
-# adding in the time-to-treatment variable.
-df_analysis <- df %>%
-  filter(!(state == "Nevada"),
-         date > 2015) %>% # nevada's retail vs sports implementation too extreme based on calculation.
-  mutate(unemployment = unemployment/100,
-         bachelors = bachelors/100,
-         time_treat_retail = ifelse(retail == 1, date - retailyear, 0),
-         time_treat_online = ifelse(online == 1, date - onlineyear, 0),
-         time_treat = ifelse(legal == 1, date - legal.year, 0))
+library(panelView)
+
+# i need to create a separate variable for implementation years only
+df_special <- df %>%
+  arrange(state, date) %>%
+  mutate(implementation_retail = replace_na(if_else(date >= retailyear, 1, 0),0),
+         implementation_online = replace_na(if_else(date >= onlineyear, 1, 0),0))
+
+
+panelview(unemployment ~ implementation_retail, data = df_special, index = c("abbrev","date"),  xlab = "Year", ylab = "States", main = "Retail Legalization (2006 - 2023)", display.all = T, axis.lab = "time",
+  gridOff = FALSE, by.timing = TRUE)
+
+
+panelview(data = df_special,Y='unemployment',
+          D='implementation_retail',index=c("abbrev","year"),
+          by.timing = TRUE, display.all = TRUE,
+          xlab = "Year", ylab = "Unemployment Rate", main = "Unemployment Rate based on Retail Legalization (2006 - 2023)", xlim = c(2006, 2023), ylim = c(0,15),
+          type = "outcome", by.cohort = TRUE)
+
+panelview(unemployment ~ implementation_online, data = df_special, index = c("abbrev","date"),  xlab = "Year", ylab = "States", main = "Online Legalization (2006 - 2023)", axis.lab = "time", display.all = T,
+  gridOff = FALSE, by.timing = TRUE)
+
+
+panelview(data = df_special,Y='unemployment',
+          D='implementation_online',index=c("abbrev","year"),
+          by.timing = TRUE, display.all = TRUE,
+          xlab = "Year", ylab = "Unemployment Rate", main = "Unemployment Rate based on Online Legalization (2006 - 2023)", axis.lab.gap = 2, ylim = c(0,15),
+          type = "outcome", by.cohort = TRUE)
+#> Number of unique treatment histories: 17
 
 ```
 
+
 # Trends in Legalization
-Plot that shows the freq of legalization.
-```{r}
+Plot that shows the freq of legalization. Not particularly useful.
+```{r, echo = FALSE}
 df_analysis %>% 
   group_by(date) %>%
   select(date, time_treat, legal) %>%
@@ -98,8 +149,8 @@ df_analysis %>%
 
 # Pre-Trends Testing
 
-This is somewhat useless, but interesting to look at.
-```{r}
+This is somewhat useless, but interesting to look at. The pre-trends inspection is something we can do when we estimate the models after all.
+```{r, echo = FALSE}
 
 df_analysis %>% filter(time_treat_retail < 0) %>%
   feols(unemployment ~ i(time_treat_retail, retailyear) + population + rgdp_2017 + bachelors | abbrev + date,
@@ -122,10 +173,12 @@ summary(model_pt_o)
 ```
 
 # TWFE model & SA model
-The models as well as their tables/figures.
+
+The models as well as their tables/figures. Focus on the results from Sun and Abraham. The TWFE models are there to demonstrate bias in the method, hence why Sun and Abraham is crucial.
+
 ```{r}
 model_twfe1 <- feols(unemployment ~ i(time_treat_retail, retail, ref = -1) + 
-                      population + rgdp_2017 + bachelors | abbrev + date,
+                      population + rgdp_2017 + bachelors + Poverty.Rate + Federal.Minimum.Wage| abbrev + date,
                     cluster = ~ abbrev,
                     data = df_analysis)
 
@@ -133,7 +186,7 @@ model_twfe1 <- feols(unemployment ~ i(time_treat_retail, retail, ref = -1) +
 summary(model_twfe1)
 
 model_sa1 <- feols(unemployment ~ sunab(retailyear, date) + 
-                      population + rgdp_2017 + bachelors | abbrev + date,
+                      population + rgdp_2017 + bachelors + Poverty.Rate + Federal.Minimum.Wage | abbrev + date,
                     cluster = ~ abbrev,
                     data = df_analysis)
 
@@ -142,12 +195,12 @@ iplot(model_twfe1, main = "Retail Gambling on Unemployment (TWFE)")
 iplot(model_sa1, main = "Retail Gambling on Unemployment (Sun & Abraham)", xlab = "Year to Implementation")
 
 model_twfe2 <- feols(unemployment ~ i(time_treat_online, online, ref = -1) + 
-                      population + rgdp_2017 + bachelors | abbrev + date,
+                      population + rgdp_2017 + bachelors + Poverty.Rate + Federal.Minimum.Wage | abbrev + date,
                     cluster = ~ abbrev,
                     data = df_analysis)
 
 model_sa2 <- feols(unemployment ~ sunab(onlineyear, date) + 
-                      population + rgdp_2017 + bachelors | abbrev + date,
+                      population + rgdp_2017 + bachelors + Poverty.Rate + Federal.Minimum.Wage | abbrev + date,
                     cluster = ~ abbrev,
                     data = df_analysis)
 
@@ -167,12 +220,128 @@ agg_ATT_sa2 <- aggregate(model_sa2, agg = "ATT", use_weights = T)
 
 ```
 
+## Employment vs Unemployment Levels Test
+
+Oh very interesting, it seems like employment does go down. 
+
+Will have to do 
+```{r}
+model_sa1_e <- feols(Employment ~ sunab((retailyear), date) + 
+                      population + rgdp_2017 + bachelors + Poverty.Rate  | abbrev + date,
+                    cluster = ~ abbrev,
+                    data = df_analysis)
+
+iplot(model_sa1_e, main = "Retail Gambling on Employment (Levels)", xlab = "Year to Implementation", ylab = "Levels Estimate and 95% Conf. Int.")
+
+model_sa2_e <- feols(Employment ~ sunab(onlineyear, date) + 
+                      population + rgdp_2017 + bachelors + Poverty.Rate | abbrev + date,
+                    cluster = ~ abbrev,
+                    data = df_analysis)
+summary(model_sa2_e)
+iplot(model_sa2_e, main = "Online Legalization Effect on Employment (Levels)", xlab = "Year to Legalization", ylab = "Levels Estimate and 95% Conf. Int.")
+
+par(mfrow = c(1,1))
+
+etable(list(model_sa1_e, model_sa2_e), tex = T)
+
+
+agg_cohort_employmentr <- aggregate(model_sa1_e, agg = c("cohort"))
+agg_ATT_employmentr <- aggregate(model_sa1_e, agg = "ATT", use_weights = T)
+
+agg_cohort_employmento <- aggregate(model_sa2_e, agg = c("cohort"))
+agg_ATT_employmento <- aggregate(model_sa2_e, agg = "ATT", use_weights =T)
+
+
+
+```
+
+
+Levels unemployment is about the same as the rate, which is unsurprising.
+```{r, echo = FALSE}
+model_sa1_ue <- feols(Unemployment ~ sunab((retailyear), date) + 
+                      population + rgdp_2017 + bachelors + Poverty.Rate  | abbrev + date,
+                    cluster = ~ abbrev,
+                    data = df_analysis)
+
+iplot(model_sa1_ue, main = "Retail Gambling on Unemployment (Levels)", xlab = "Year to Implementation" , ylab = "Levels Estimate and 95% Conf. Int.")
+
+model_sa2_ue <- feols(Unemployment ~ sunab(onlineyear, date) + population + rgdp_2017 + bachelors + Poverty.Rate | abbrev + date,
+                    cluster = ~ abbrev,
+                    data = df_analysis)
+
+iplot(model_sa2_ue, main = "Online Legalization Effect on Unemployment (Levels)", xlab = "Year to Legalization", ylab = "Levels Estimate and 95% Conf. Int.")
+
+etable(list(model_sa1_ue, model_sa2_ue), tex = T)
+
+```
+
+### Poverty Rate...
+
+There is actually no effect, that's a surprise. Federal minimum wage removed because of collinearity concerns.
+
+```{r}
+
+model_sa1_pov <- feols(Poverty.Rate ~ sunab(retailyear, date) + 
+                      population + rgdp_2017 + bachelors + unemployment | abbrev + date,
+                    cluster = ~ abbrev,
+                    data = df_analysis)
+
+iplot(model_sa1_pov, main = "Retail Legalization Effect on Poverty (Sun & Abraham)", xlab = "Year to Legalization")
+
+model_sa2_pov <- feols(Poverty.Rate ~ sunab(onlineyear, date) + 
+                      population + rgdp_2017 + bachelors + unemployment | abbrev + date,
+                    cluster = ~ abbrev,
+                    data = df_analysis)
+
+iplot(model_sa2_pov, main = "Online Legalization Effect on Poverty (Sun & Abraham)", xlab = "Year to Legalization")
+
+
+etable(list(model_sa1_pov, model_sa2_pov), tex = T)
+
+agg_cohort_povertyr <- aggregate(model_sa1_pov, agg = c("cohort"))
+agg_ATT_povertyr <- aggregate(model_sa1_pov, agg = "ATT", use_weights = T)
+
+agg_cohort_povertyo <- aggregate(model_sa2_pov, agg = c("cohort"))
+agg_ATT_povertyo <- aggregate(model_sa2_pov, agg = "ATT", use_weights =T)
+
+```
+
+
+## Three Way DiD with removal of NA mean_eff_rates...
+
+I think the best option here is a correlation analysis in the pre and post trends to see if it is independent. If there is a relationship, then we could make some kind of conjecture of some sort. Otherwise, we just have a table and we compare the results to see if the mean differences and SE are significant.
+
+There's no relationship whatsoever between the mean effective tax rate and the unemployment rate...
+
+```{r}
+df_analysis2 <- df_analysis %>% na.omit(mean_eff_tax)
+
+summary(df_analysis2)
+
+eff_tax_1 <- feols(unemployment ~ mean_eff_tax + population + bachelors + rgdp_2017 + Poverty.Rate | abbrev + date(), cluster = ~abbrev, data = df_analysis2)
+
+summary(eff_tax_1)
+
+eff_tax_2 <- feols(Employment ~ mean_eff_tax + population + bachelors + rgdp_2017 + Poverty.Rate | abbrev + date(), cluster = ~abbrev, data = df_analysis2)
+
+summary(eff_tax_2)
+
+
+etable(eff_tax_1, tex = T)
+
+
+
+```
+
+
+This is a much smaller sample though, so must be taken with a grain of salt.
+
 ## Supplemental Analysis
-We look at credit card debt per capita. 
+We look at credit card debt per capita. I will have to retool the models a little bit given the new variables and all of that...
 
 ```{r}
 library(readxl)
-credit_debt <- read_excel("~/Desktop/Math Programming/ECON427/final_project/other_data/debt_by_state.xlsx", 
+credit_debt <- read_excel("/Users/kevinphan981/Programming/ECON427/final_project/other_data/debt_by_state.xlsx", 
     sheet = "creditcard", skip = 8)
 
 credit_debt <- credit_debt %>%
@@ -189,13 +358,31 @@ df_debt <- merge(df_analysis, credit_debt, by = c("date", "abbrev"))
 ```
 
 ```{r}
+credit_delinq <- read_excel("/Users/kevinphan981/Programming/ECON427/final_project/other_data/debt_by_state.xlsx", 
+    sheet = "creditcard_delinq", skip = 8)
+
+credit_delinq <- credit_delinq %>%
+  pivot_longer(
+    cols = Q4_2003:Q4_2024,
+    names_to = c("year"),
+    values_to = "delinq") %>%
+  mutate(year = as.numeric(substring(year, 4, 10))) %>%
+  rename("abbrev" = "state",
+         "date" = "year")
+
+df_delinq <- merge(df_analysis, credit_delinq, by = c("date", "abbrev"))
+```
+
+
+```{r}
 
 # hmm, if you have fixed effects for state and time, then it fails...
 
 df_debt %>%
   feols((debt) ~ sunab(legal.year, date) + population + rgdp_2017 + bachelors | abbrev + date, clusters = ~abbrev, data = .) -> model_debt
 
-iplot(model_debt)
+iplot(model_debt, main = "Online Gambling Effect on Credit Card Debt Per Capita",
+      xlab = "Year to Implementation")
 df_debt %>%
   feols((debt) ~ sunab(retailyear, date) + population + rgdp_2017 + bachelors | abbrev + date, clusters = ~abbrev, data = .) -> model_debt_r
 
@@ -218,22 +405,79 @@ agg_ATT_debto <- aggregate(model_debt_o, agg = "ATT", use_weights =T)
 
 ```
 
+```{r}
+df_delinq %>%
+  feols((delinq) ~ sunab(legal.year, date) + population + rgdp_2017 + bachelors | abbrev + date, clusters = ~abbrev, data = .) -> model_delinq
+
+iplot(model_delinq, main = "Online Gambling Effect on the Percentage of Delinquent C.C. Debt", xlab = "Year to Implementation")
+
+df_delinq %>%
+  feols((delinq) ~ sunab(retailyear, date) + population + rgdp_2017 + bachelors | abbrev + date, clusters = ~abbrev, data = .) -> model_delinq_r
+
+summary(model_delinq_r)
+iplot(model_delinq_r, main = "Retail Gambling Effect on the Percentage of Delinquent C.C. Debt", xlab = "Year to Implementation")
+
+df_delinq %>%
+  feols((delinq) ~ sunab(onlineyear, date) + population + rgdp_2017 + bachelors | abbrev + date, clusters = ~abbrev, data = .) -> model_delinq_o
+
+summary(model_delinq_o)
+etable(list(model_delinq_r, model_delinq_o), tex = T)
+
+agg_cohort_delinqr <- aggregate(model_delinq_r, agg = c("cohort"))
+agg_ATT_delinqr <- aggregate(model_delinq_r, agg = "ATT", use_weights = T)
+
+agg_cohort_delinqo <- aggregate(model_delinq_o, agg = c("cohort"))
+agg_ATT_delinqo <- aggregate(model_delinq_o, agg = "ATT", use_weights =T)
 
 
+```
+
+
+
+# ATT, Cohort-treatment Tables
+
+Here is the order in how we're doing this. 
+
+1. retail - unemployment
+2. online - unemployment
+3. retail - Employment
+4. online - Employment
+5. retail - credit debt
+6. online - credit debt
+7. retail - delinq
+8. online - delinq
+9. retail - poverty
+10. online - poverty
 
 ```{r}
 # cohort average treatment effects and the general ATT
-att_labels = c("Retail on Unemployment", "Online on Unemployment", "Retail on Credit Debt", "Online on Credit Debt")
+att_labels = c("(Retail) Unemployment Rate", "(Online) Unemployment Rate",
+               "(Retail) Level Employment", "(Online) Level Employment",
+               "(Retail) Credit Card Debt", "(Online) Credit Card Debt",
+               "(Retail) Delinquent C.C. Debt", "(Online) Delinquent C.C. Debt",
+               "(Retail) Poverty Rate", "(Online) Poverty Rate")
 
-ATT <- rbind(agg_ATT_sa1, agg_ATT_sa2, agg_ATT_debtr, agg_ATT_debto)
-stargazer(ATT, title = "ATT from Diff-in-Diff Models", type = "latex", notes = "The ATT is calculated from the CATT using weighted averages. These weighted averages are calculated under the hood when we run Sun and Abraham's estimator using the fixest package in R.")
 
+ATT <- rbind(agg_ATT_sa1, agg_ATT_sa2, agg_ATT_employmentr, agg_ATT_employmento, agg_ATT_debtr, agg_ATT_debto, agg_ATT_delinqr, agg_ATT_delinqo, agg_ATT_povertyr, agg_ATT_povertyo)
+
+rownames(ATT) <- att_labels
+
+stargazer(ATT, title = "Average Treatment Effect on the Treated (ATT) from Legalization", type = "latex", notes = "The ATT is calculated from the CATT using weighted averages. These weighted averages are calculated under the hood when we run Sun and Abraham's estimator using the fixest package in R.")
+
+```
+
+## Cohort Average Treatment Effect on the Treated
+There will be several tables for this as well. I might as well report everything that I have.
+```{r}
 
 cohorts <- as.data.frame(rbind(agg_cohort_sa1, agg_cohort_sa2, agg_cohort_debtr, agg_cohort_debto))
 # stargazer(cohorts, main = "Cohort-Level Effects (By Year) By Model") no work
 
-kableExtra::kable(cohorts, type = "text", digits = 3, main = "Cohort-Level Effects (By Year) By Model") %>% kableExtra::kable_classic()
+# run it in the console and it works, why....
+kableExtra::kable(agg_cohort_sa2, format = "latex", digits = 3, caption = "Cohort-Level Effects (By Year) By Model") %>% kableExtra::kable_classic
+
 ```
+
 
 
 
